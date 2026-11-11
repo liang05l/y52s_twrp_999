@@ -46,7 +46,7 @@ jobs:
             echo "等待 dpkg 锁释放... ($i)"; sleep 2
           done
           need=""
-          for b in bc bison flex gperf lz4 rsync schedtool ccache; do
+          for b in bc bison flex gperf lz4 rsync schedtool; do
             command -v "$b" >/dev/null 2>&1 || need="$need $b"
           done
           [ -e /usr/include/openssl/ssl.h ]  || need="$need libssl-dev"
@@ -72,16 +72,6 @@ jobs:
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> "$GITHUB_PATH"
-
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.workspace }}/ccache
-          # 换了设备配置/补丁就换新 key，但仍用 restore-keys 拿旧缓存做增量
-          key: ccache-${{ runner.os }}-v1-${{ hashFiles('.github/workflows/build.yml', 'device/**', 'prebuilt-999/manifest.json') }}
-          restore-keys: |
-            ccache-${{ runner.os }}-v1-
-            ccache-${{ runner.os }}-
 
       - name: Init and sync TWRP 12.1
         env:
@@ -150,29 +140,9 @@ jobs:
           cd "$TWRP_DIR"
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
-          # ---- ccache：命中上一轮缓存时只重编改动过的部分 ----
-          # 注意：不要用 ~/.ccache（runner 上该路径可能不可写，会让 ninja 直接失败）
-          export CCACHE_DIR="$(dirname "$TWRP_DIR")/ccache"
-          export CCACHE_EXEC="$(command -v ccache || echo /usr/bin/ccache)"
-          mkdir -p "$CCACHE_DIR"
-          if touch "$CCACHE_DIR/.wtest" 2>/dev/null; then
-            rm -f "$CCACHE_DIR/.wtest"
-            export USE_CCACHE=1
-            export CCACHE_COMPRESS=1
-            export CCACHE_COMPILERCHECK=content
-            "$CCACHE_EXEC" -M 4G >/dev/null 2>&1 || true
-            "$CCACHE_EXEC" -z  >/dev/null 2>&1 || true
-            "$CCACHE_EXEC" -s | head -n 12 || true
-          else
-            echo "::warning::ccache 目录不可写，本次禁用 ccache（不影响产出）"
-            export USE_CCACHE=0
-          fi
-          echo "USE_CCACHE=$USE_CCACHE CCACHE_DIR=$CCACHE_DIR"
           source build/envsetup.sh
           lunch omni_k6853v1_64_6360-eng
           time mka recoveryimage -j"$(nproc --all)"
-          echo "---- ccache 统计 ----"
-          [ "${USE_CCACHE:-0}" = "1" ] && { "$CCACHE_EXEC" -s | head -n 20 || true; } || echo "ccache 未启用"
           ls -lh out/target/product/k6853v1_64_6360/recovery.img
 
       - name: Graft user-999 decryption components
