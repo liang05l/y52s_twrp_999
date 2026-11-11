@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+/work/
+*.img
+!device/vivo/k6853v1_64_6360/prebuilt/*.img

@@ -1,0 +1,287 @@
+{
+ "system/kslib/android.system.wifi.keystore@1.0.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 88656,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 49,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 88656
+ },
+ "system/kslib/libkeystore-engine.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 76904,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 35,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 76904
+ },
+ "system/kslib/libkeystore_aidl.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 216816,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 33,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 216816
+ },
+ "system/kslib/libkeystore_binder.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 119200,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 35,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 119200
+ },
+ "system/kslib/libkeystore_parcelables.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 54840,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 40,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 54840
+ },
+ "system/kslib/libprotobuf-cpp-lite.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 279752,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 37,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 279752
+ },
+ "system/kslib/libwifikeystorehal.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 80200,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 35,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 80200
+ },
+ "system/kslib/libwifikeystorehalext.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 20784,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 38,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 20784
+ },
+ "system/kslib/vendor.vivo.hardware.wifi.keystore@1.0.so": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 79936,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 55,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 79936
+ },
+ "system/bin/recovery": {
+  "vals": {
+   "ino": 300338,
+   "mode": 33261,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 2561592,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 20,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 2561592
+ },
+ "system/lib64/libtar.so": {
+  "vals": {
+   "ino": 303487,
+   "mode": 33188,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 452712,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 23,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 452712
+ },
+ "system/bin/fscryptpolicyget": {
+  "vals": {
+   "ino": 300239,
+   "mode": 33261,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 25232,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 28,
+   "check": 0
+  },
+  "is_elf": true,
+  "size": 25232
+ },
+ "system/bin/y52s_ks_prep.sh": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33261,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 2318,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 27,
+   "check": 0
+  },
+  "is_elf": false,
+  "size": 2318
+ },
+ "sbin/y52s_prepare.sh": {
+  "vals": {
+   "ino": 300048,
+   "mode": 33261,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 586,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 21,
+   "check": 0
+  },
+  "is_elf": false,
+  "size": 586
+ },
+ "system/kslib": {
+  "vals": {
+   "ino": 300048,
+   "mode": 16877,
+   "uid": 0,
+   "gid": 0,
+   "nlink": 1,
+   "mtime": 0,
+   "filesize": 0,
+   "devmajor": 0,
+   "devminor": 0,
+   "rdevmajor": 0,
+   "rdevminor": 0,
+   "namesize": 13,
+   "check": 0
+  },
+  "is_elf": false,
+  "size": 0
+ }
+}

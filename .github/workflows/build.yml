@@ -1,0 +1,144 @@
+name: Build TWRP for vivo Y52s (PD2057)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_999:
+        description: "移植用户 999 解密组件 (prebuilt-999 → ramdisk)"
+        required: false
+        default: "true"
+      jobs:
+        description: "编译并发数"
+        required: false
+        default: "4"
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout device tree overlay
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
+            libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
+            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
+
+      - name: Install repo tool
+        run: |
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Init and sync TWRP 12.1
+        run: |
+          git config --global user.name  "ci"
+          git config --global user.email "ci@localhost"
+          git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+          mkdir -p /mnt/twrp && cd /mnt/twrp
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+                    -b twrp-12.1 --depth=1
+          repo sync -c -j"$(nproc --all)" --force-sync --no-clone-bundle --no-tags
+          df -h /mnt
+
+      - name: Fetch upstream device tree (for large prebuilts)
+        run: |
+          cd /mnt/twrp
+          git clone --depth 1 -b twrp-12.1 \
+            https://github.com/liang05l/android_device_vivo_pd2031.git \
+            device/vivo/k6853v1_64_6360
+
+      - name: Overlay Y52s (PD2057) device tree
+        run: |
+          cd /mnt/twrp
+          rsync -a --exclude='.git' --exclude='.github' \
+            "$GITHUB_WORKSPACE/device/vivo/k6853v1_64_6360/" \
+            device/vivo/k6853v1_64_6360/
+          # 999 组件是否注入，由 prebuilt-999 目录的 rename 决定
+          if [ "${{ github.event.inputs.apply_999 || 'true' }}" != "true" ]; then
+            mv "$GITHUB_WORKSPACE/prebuilt-999" "$GITHUB_WORKSPACE/prebuilt-999.disabled"
+            echo "999 graft disabled"
+          fi
+          echo "--- 关键配置自检 ---"
+          grep -n "PD2057" device/vivo/k6853v1_64_6360/BoardConfig.mk
+          grep -n "PRODUCT_MODEL\|FOX_DEVICE_MODEL\|BUILD_FINGERPRINT" device/vivo/k6853v1_64_6360/omni_k6853v1_64_6360.mk
+          ls -l device/vivo/k6853v1_64_6360/prebuilt/
+          ls device/vivo/k6853v1_64_6360/patches/system_vold/
+
+      - name: Apply patches (vold + bootable/recovery)
+        run: |
+          cd /mnt/twrp
+          python3 device/vivo/k6853v1_64_6360/patches/apply-patches.sh 2>&1 | tee /tmp/patches.log
+          echo "--- 冲突检查 ---"
+          if grep -q "✗" /tmp/patches.log; then
+            echo "::error::有补丁应用失败，见 /tmp/patches.log"
+            exit 1
+          fi
+
+      - name: Build recoveryimage
+        run: |
+          cd /mnt/twrp
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          source build/envsetup.sh
+          lunch omni_k6853v1_64_6360-eng
+          mka recoveryimage -j"${{ github.event.inputs.jobs || '4' }}"
+          ls -lh out/target/product/k6853v1_64_6360/recovery.img
+
+      - name: Graft user-999 decryption components
+        if: ${{ github.event.inputs.apply_999 != 'false' }}
+        run: |
+          cd /mnt/twrp
+          IMG="$PWD/out/target/product/k6853v1_64_6360/recovery.img"
+          cp "$IMG" "${IMG}.source-only"
+          echo "--- 源码构建原版另存为 recovery.img.source-only ---"
+          python3 "$GITHUB_WORKSPACE/tools/graft_999_precise.py" \
+            --base "$IMG" \
+            --donor-dir "$GITHUB_WORKSPACE/prebuilt-999" \
+            --out "$IMG" 2>&1 | tee /tmp/graft.log
+          if ! grep -q "全部自检通过" /tmp/graft.log; then
+            echo "::error::999 移植自检失败"
+            exit 1
+          fi
+
+      - name: Make hybrid image with vivo AVB footer
+        run: |
+          cd /mnt/twrp
+          python3 device/vivo/k6853v1_64_6360/make_hybrid.py \
+            out/target/product/k6853v1_64_6360/recovery.img
+          python3 - <<'PY'
+          import struct,hashlib,os
+          p='/mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img'
+          d=open(p,'rb').read()
+          print('size', len(d))
+          print('sha256', hashlib.sha256(d).hexdigest())
+          f=d[-64:]
+          print('footer magic', f[:4], 'vbmeta_off', struct.unpack('>Q',f[20:28])[0],
+                'vbmeta_size', struct.unpack('>Q',f[28:36])[0])
+          open('/mnt/twrp/SHA256SUMS','w').write(hashlib.sha256(d).hexdigest()+'  recovery.img\n')
+          PY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-y52s-pd2057
+          path: |
+            /mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img
+            /mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img.source-only
+            /mnt/twrp/SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 14
