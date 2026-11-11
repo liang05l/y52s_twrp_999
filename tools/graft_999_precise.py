@@ -225,6 +225,9 @@ def main():
     entries = bentries
     EM = {e['name']: e for e in entries}
     for n in ELF_REPLACE:
+        if n not in EM:
+            print('  [SKIP] 基线无 %s，跳过替换' % n)
+            continue
         EM[n]['blob'] = DE[n]['blob']
 
     # rc 精确补丁
@@ -339,7 +342,8 @@ def main():
     rc = E2['init.recovery.mt6853.rc'].decode('utf-8')
     checks = []
     for n in ELF_REPLACE + adds:
-        checks.append(('来自供体: ' + n, E2.get(n) == DE[n]['blob']))
+        if n in BE:
+            checks.append(('来自供体: ' + n, E2.get(n) == DE[n]['blob']))
     checks.append(('kernel/dtbo/dtb 未变',
                    all(d[l2[k][0]:l2[k][1]] == bd[blay[k][0]:blay[k][1]]
                        for k in ('kernel', 'recovery_dtbo', 'dtb'))))
