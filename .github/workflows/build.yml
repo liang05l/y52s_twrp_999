@@ -29,12 +29,24 @@ jobs:
           df -h /
 
       - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
-            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
-            libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
-            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
+          # 22.04 runner 上 needrestart 默认会弹交互，导致 apt 永久挂起
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/sbin/needrestart >/dev/null 2>&1 || true
+          sudo -E apt-get -y -o Dpkg::Options::=--force-confnew update
+          PKGS="bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf \
+                imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool \
+                libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+                lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3"
+          timeout 1500 sudo -E apt-get -y -o Dpkg::Options::=--force-confnew install $PKGS || {
+            echo "::warning::完整依赖安装失败，退回到最小集合"
+            timeout 900 sudo -E apt-get -y install bc bison build-essential ccache curl flex git \
+              gnupg gperf imagemagick liblz4-tool libssl-dev libxml2 libxml2-utils lzop pngcrush \
+              rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
+          }
+          for b in bc bison gcc g++ make python3 zip rsync; do printf "%-8s " "$b"; command -v $b || echo "(缺失)"; done
 
       - name: Install repo tool
         run: |
