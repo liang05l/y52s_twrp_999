@@ -37,6 +37,14 @@ jobs:
           # 注意：不要装 imagemagick / g++-multilib / lib32*，会拉 i386 依赖，慢且没必要
           echo "#!/bin/sh" | sudo tee /usr/sbin/needrestart >/dev/null 2>&1 || true
           echo "exit 0" | sudo tee -a /usr/sbin/needrestart >/dev/null 2>&1 || true
+          # runner 开机时 unattended-upgrades 常持有 dpkg 锁，apt 会一直等锁
+          sudo systemctl stop unattended-upgrades  >/dev/null 2>&1 || true
+          sudo systemctl disable unattended-upgrades >/dev/null 2>&1 || true
+          sudo pkill -f unattended-upgrade >/dev/null 2>&1 || true
+          for i in $(seq 1 30); do
+            sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+            echo "等待 dpkg 锁释放... ($i)"; sleep 2
+          done
           need=""
           for b in bc bison flex gperf lz4 rsync schedtool ccache; do
             command -v "$b" >/dev/null 2>&1 || need="$need $b"
@@ -49,9 +57,9 @@ jobs:
           [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || need="$need libncurses5"
           echo "需要安装:${need:- (无)}"
           if [ -n "$need" ]; then
-            timeout 240 sudo -E apt-get -y --no-install-recommends update || echo "::warning::apt update 超时/失败，继续"
-            timeout 420 sudo -E apt-get -y --no-install-recommends \
-              -o Dpkg::Options::=--force-confnew -o Acquire::Retries=2 install $need
+            timeout 180 sudo -E apt-get -y -o DPkg::Lock::Timeout=30 --no-install-recommends update || echo "::warning::apt update 超时/失败，继续"
+            timeout 300 sudo -E apt-get -y --no-install-recommends \
+              -o DPkg::Lock::Timeout=30 -o Dpkg::Options::=--force-confnew -o Acquire::Retries=2 install $need
           fi
           echo "--- 自检 ---"
           for b in bc bison flex gperf lz4 rsync schedtool make gcc g++ python3 zip unzip; do
