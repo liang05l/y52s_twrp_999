@@ -74,26 +74,37 @@ jobs:
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Init and sync TWRP 12.1
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
+          set -e
           git config --global user.name  "ci"
           git config --global user.email "ci@localhost"
           git config --global url.https://github.com/.insteadOf ssh://git@github.com/
-          mkdir -p /mnt/twrp && cd /mnt/twrp
+          mkdir -p "$TWRP_DIR"
+          cd "$TWRP_DIR"
+          echo "TWRP_DIR=$TWRP_DIR"; df -h "$TWRP_DIR"
           repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
                     -b twrp-12.1 --depth=1
-          repo sync -c -j"$(nproc --all)" --force-sync --no-clone-bundle --no-tags
-          df -h /mnt
+          time repo sync -c -j"$(nproc --all)" --force-sync --no-clone-bundle --no-tags --optimized-fetch
+          df -h "$TWRP_DIR"
 
       - name: Fetch upstream device tree (for large prebuilts)
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           git clone --depth 1 -b twrp-12.1 \
             https://github.com/liang05l/android_device_vivo_pd2031.git \
             device/vivo/k6853v1_64_6360
 
       - name: Overlay Y52s (PD2057) device tree
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           rsync -a --exclude='.git' --exclude='.github' \
             "$GITHUB_WORKSPACE/device/vivo/k6853v1_64_6360/" \
             device/vivo/k6853v1_64_6360/
@@ -109,8 +120,11 @@ jobs:
           ls device/vivo/k6853v1_64_6360/patches/system_vold/
 
       - name: Apply patches (vold + bootable/recovery)
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           python3 device/vivo/k6853v1_64_6360/patches/apply-patches.sh 2>&1 | tee /tmp/patches.log
           echo "--- 冲突检查 ---"
           if grep -q "✗" /tmp/patches.log; then
@@ -119,8 +133,11 @@ jobs:
           fi
 
       - name: Build recoveryimage
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           source build/envsetup.sh
@@ -130,8 +147,11 @@ jobs:
 
       - name: Graft user-999 decryption components
         if: ${{ github.event.inputs.apply_999 != 'false' }}
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           IMG="$PWD/out/target/product/k6853v1_64_6360/recovery.img"
           cp "$IMG" "${IMG}.source-only"
           echo "--- 源码构建原版另存为 recovery.img.source-only ---"
@@ -145,20 +165,23 @@ jobs:
           fi
 
       - name: Make hybrid image with vivo AVB footer
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
-          cd /mnt/twrp
+          set -e
+          cd "$TWRP_DIR"
           python3 device/vivo/k6853v1_64_6360/make_hybrid.py \
             out/target/product/k6853v1_64_6360/recovery.img
           python3 - <<'PY'
           import struct,hashlib,os
-          p='/mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img'
+          p=os.path.join(os.environ['TWRP_DIR'],'out/target/product/k6853v1_64_6360/recovery.img')
           d=open(p,'rb').read()
           print('size', len(d))
           print('sha256', hashlib.sha256(d).hexdigest())
           f=d[-64:]
           print('footer magic', f[:4], 'vbmeta_off', struct.unpack('>Q',f[20:28])[0],
                 'vbmeta_size', struct.unpack('>Q',f[28:36])[0])
-          open('/mnt/twrp/SHA256SUMS','w').write(hashlib.sha256(d).hexdigest()+'  recovery.img\n')
+          open(os.path.join(os.environ['TWRP_DIR'],'SHA256SUMS'),'w').write(hashlib.sha256(d).hexdigest()+'  recovery.img\n')
           PY
 
       - name: Upload artifact
@@ -166,8 +189,8 @@ jobs:
         with:
           name: twrp-y52s-pd2057
           path: |
-            /mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img
-            /mnt/twrp/out/target/product/k6853v1_64_6360/recovery.img.source-only
-            /mnt/twrp/SHA256SUMS
+            ${{ runner.workspace }}/twrp/out/target/product/k6853v1_64_6360/recovery.img
+            ${{ runner.workspace }}/twrp/out/target/product/k6853v1_64_6360/recovery.img.source-only
+            ${{ runner.workspace }}/twrp/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14
