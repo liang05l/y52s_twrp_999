@@ -354,8 +354,13 @@ def main():
                        and 'PD2057' in n) == 7 and
                    E2['system/bin/vts_app_recovery'] ==
                    BE['system/bin/vts_app_recovery']['blob']))
-    checks.append(('触控 sysfs 权限块保留', 'vivo_ts' in rc and
-                   'vts_app_recovery --update' in rc))
+    # 基线里本来就有触控权限块时才要求保留（源码新构建的 rc 可能写法不同，不能一刀切）
+    base_rc = BE['init.recovery.mt6853.rc']['blob'].decode('utf-8', 'replace')
+    if 'vivo_ts' in base_rc:
+        checks.append(('触控 sysfs 权限块保留',
+                       'vivo_ts' in rc and 'vts_app_recovery --update' in rc))
+    else:
+        print('  [SKIP] 基线 rc 无 vivo_ts 权限块，跳过该检查')
     checks.append(('rc: LD_LIBRARY_PATH 补 /vendor/lib64',
                    'export LD_LIBRARY_PATH /system/lib64:/vendor/lib64:/vendor/lib64/hw'
                    in rc))
@@ -375,10 +380,14 @@ def main():
                    rc_lines.index('start y52s_ks_prep') >
                    rc_lines.index('start guardianangle')))
     checks.append(('system/kslib 目录条目已补齐', 'system/kslib' in E2))
-    checks.append(('fastbootd 等 only-base 条目保留',
-                   all(n in E2 and E2[n] == BE[n]['blob'] for n in
-                       ['system/bin/fastbootd',
-                        'system/lib64/android.hardware.fastboot@1.1.so'])))
+    # 只对基线里确实存在的条目要求"原样保留"；源码构建可能根本没把 fastbootd 打进 ramdisk
+    fb = [n for n in ('system/bin/fastbootd',
+                      'system/lib64/android.hardware.fastboot@1.1.so') if n in BE]
+    if fb:
+        checks.append(('fastbootd 等 only-base 条目保留',
+                       all(n in E2 and E2[n] == BE[n]['blob'] for n in fb)))
+    else:
+        print('  [SKIP] 基线无 fastbootd，跳过该检查')
     checks.append(('AVB 长度/摘要自洽',
                    struct.unpack_from('>Q', d[-64:], 0x0C)[0] == section_end and
                    vb[off + pn + sl:off + pn + sl + rl] ==
