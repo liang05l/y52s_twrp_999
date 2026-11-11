@@ -23,8 +23,8 @@ jobs:
 
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
-                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           sudo apt-get clean
           df -h /
 
@@ -33,20 +33,30 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
         run: |
-          # 22.04 runner 上 needrestart 默认会弹交互，导致 apt 永久挂起
-          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/sbin/needrestart >/dev/null 2>&1 || true
-          sudo -E apt-get -y -o Dpkg::Options::=--force-confnew update
-          PKGS="bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf \
-                imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool \
-                libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
-                lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3"
-          timeout 1500 sudo -E apt-get -y -o Dpkg::Options::=--force-confnew install $PKGS || {
-            echo "::warning::完整依赖安装失败，退回到最小集合"
-            timeout 900 sudo -E apt-get -y install bc bison build-essential ccache curl flex git \
-              gnupg gperf imagemagick liblz4-tool libssl-dev libxml2 libxml2-utils lzop pngcrush \
-              rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
-          }
-          for b in bc bison gcc g++ make python3 zip rsync; do printf "%-8s " "$b"; command -v $b || echo "(缺失)"; done
+          # 只装真正缺的包（runner 自带 gcc/g++/make/git/curl/zip/python3）
+          # 注意：不要装 imagemagick / g++-multilib / lib32*，会拉 i386 依赖，慢且没必要
+          echo "#!/bin/sh" | sudo tee /usr/sbin/needrestart >/dev/null 2>&1 || true
+          echo "exit 0" | sudo tee -a /usr/sbin/needrestart >/dev/null 2>&1 || true
+          need=""
+          for b in bc bison flex gperf lz4 rsync schedtool ccache; do
+            command -v "$b" >/dev/null 2>&1 || need="$need $b"
+          done
+          [ -e /usr/include/openssl/ssl.h ]  || need="$need libssl-dev"
+          [ -e /usr/include/zlib.h ]         || need="$need zlib1g-dev"
+          [ -e /usr/include/libxml2 ]        || need="$need libxml2-dev"
+          [ -e /usr/bin/xsltproc ]           || need="$need xsltproc"
+          [ -e /usr/bin/pngcrush ]           || need="$need pngcrush"
+          [ -e /usr/lib/x86_64-linux-gnu/libncurses.so.5 ] || need="$need libncurses5"
+          echo "需要安装:${need:- (无)}"
+          if [ -n "$need" ]; then
+            timeout 240 sudo -E apt-get -y --no-install-recommends update || echo "::warning::apt update 超时/失败，继续"
+            timeout 420 sudo -E apt-get -y --no-install-recommends \
+              -o Dpkg::Options::=--force-confnew -o Acquire::Retries=2 install $need
+          fi
+          echo "--- 自检 ---"
+          for b in bc bison flex gperf lz4 rsync schedtool make gcc g++ python3 zip unzip; do
+            printf "%-10s " "$b"; command -v "$b" || echo "(缺失)"
+          done
 
       - name: Install repo tool
         run: |
