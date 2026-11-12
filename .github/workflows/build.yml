@@ -187,6 +187,37 @@ jobs:
             exit 1
           fi
 
+      - name: Suppress dynamic-partition mount errors (002 等效补丁)
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          set -e
+          cd "$TWRP_DIR"
+          python3 - <<'PY'
+          import re, sys, os
+          p = 'bootable/recovery/partition.cpp'
+          s = open(p, encoding='utf-8').read()
+          if 'Mount_Point != "/vendor"' in s:
+              print('already patched'); sys.exit(0)
+          lines = s.split('\n'); hit = 0
+          for i, l in enumerate(lines):
+              if 'gui_msg' in l and 'fail_mount=' in l:
+                  for j in range(i - 1, max(-1, i - 4), -1):
+                      if 'Display_Error' in lines[j] and 'Removable' in lines[j]:
+                          ind = re.match(r'\s*', lines[j]).group(0)
+                          cond = lines[j].rstrip()
+                          if not cond.endswith(')'):
+                              break
+                          lines[j] = (cond[:-1] + ' &&\n' + ind +
+                                      '\tMount_Point != "/vendor" && Mount_Point != "/system_root" && Mount_Point != "/persist")')
+                          hit += 1
+                          break
+          if hit == 0:
+              sys.exit('ERROR: 没找到 fail_mount 的 if 条件，需人工核对 partition.cpp')
+          open(p, 'w', encoding='utf-8').write('\n'.join(lines))
+          print('patched fail_mount 条件处数 =', hit)
+          PY
+
       - name: Build recoveryimage
         env:
           TWRP_DIR: ${{ runner.workspace }}/twrp
