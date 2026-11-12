@@ -177,3 +177,17 @@ tools/{bootimg,cpio,graft_user999}.py  零依赖的 boot image / cpio 处理库
 所以 999 只能来自那个已经编译好的二进制，本仓库用 `prebuilt-999/` 注入的方式承载。
 
 另外：`recovery/root/sbin/decrypt` 只是 OrangeFox 的 `fox decrypt $1` 包装脚本（15 行），不含解密逻辑。
+
+---
+
+## 9. 构建期修复清单（每一项都有对应检查）
+
+| # | 问题 | 修法 | 检查点 |
+|---|---|---|---|
+| 1 | `prebuilt/dtb.img` 表头被写成 dtbo 尺寸（199573），表项越界 → 内核挂死、USB 不枚举 | 按 boot header 正确偏移重新提取，与原厂 dtb 段字节一致（`aafc2bee…`） | Preflight 断言 `total==len`、`off+sz<=len`；Verify 断言成品 dtb 段 == prebuilt |
+| 2 | 上游树带 y73s 的 `vts_app_recovery`（108712B）→ y52s 无触摸 | 覆盖成 y52s 原厂版（108800B，`66ed8689…`） | Preflight 断言大小 108800；Verify 断言成品内为 108800 |
+| 3 | 源码树 rc 里**没有**触控 sysfs 权限块 → `vts_app_recovery` 无权限访问 | 把原厂 `init.recovery.touch.rc` 的 145 行权限块作为 `touch/touch_perms.fragment`，构建前插入 rc 的 `on boot` 段前 | Preflight 断言 fragment 内容（≥80 处 `vivo_ts`）；Verify 断言成品 rc 里 `vivo_ts` ≥ 80 |
+| 4 | 上游 `patches/bootable_recovery/0002` 在 twrp-12.1 上没生效 → 屏幕/日志出现 8 条挂载失败 | 构建前用确定性替换改 `partition.cpp` 的 `fail_mount` 条件（找不到只告警不阻断） | 步骤日志打印 `patched fail_mount 条件处数` |
+| 5 | ccache 与源码同分区 → soong sandbox 判只读（`Read-only file system`） | ccache 挂到 tmpfs `/mnt/ccache` + `actions/cache` 持久化 | 构建日志打印 `ccache -s` |
+| 6 | 999 解密 | `prebuilt-999/` 注入（源码未公开） | 注入自检 30 项 + Verify 断言 `system/kslib` 存在 |
+| 7 | PD2057 触控固件 | 覆盖层 7 个文件 | Preflight/Verify 断言数量 == 7 |
