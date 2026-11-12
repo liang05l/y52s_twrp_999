@@ -46,6 +46,7 @@ jobs:
           frag = open(os.path.join(base, 'touch/touch_perms.fragment'), encoding='utf-8').read()
           assert frag.count('vivo_ts') >= 80, 'touch_perms.fragment 内容不完整'
           assert 'on boot' in frag, 'touch_perms.fragment 缺少 on boot 段'
+
           print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d' %
                 (total, cnt, len(v), len(fw), os.path.getsize(os.path.join(base, 'prebuilt/dtbo.img'))))
           PY
@@ -177,6 +178,40 @@ jobs:
           grep -n "PRODUCT_MODEL\|FOX_DEVICE_MODEL\|BUILD_FINGERPRINT" device/vivo/k6853v1_64_6360/omni_k6853v1_64_6360.mk
           ls -l device/vivo/k6853v1_64_6360/prebuilt/
           ls device/vivo/k6853v1_64_6360/patches/system_vold/
+
+      - name: Fix product model in init rc (y73s PD2031 -> y52s PD2057)
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          set -e
+          cd "$TWRP_DIR"
+          python3 - <<'PY'
+          import glob, sys, os
+          # 上游设备树是 y73s(PD2031) 的，init rc 里写死了
+          #   setprop ro.vivo.product.model PD2031 / ro.product.model PD2031
+          # vivo 的 vts_app_recovery 会按这个属性去找触控固件，
+          # 找不到 PD2031 的固件就崩溃 -> 固件写不进触控 IC -> 触摸完全失效。
+          # 必须改成 PD2057，否则 recovery 里没有触摸。
+          n = 0
+          for p in glob.glob('device/vivo/*/recovery/root/init.recovery.*.rc'):
+              s = open(p, encoding='utf-8').read()
+              if 'PD2031' not in s:
+                  continue
+              new = s.replace('PD2031', 'PD2057')
+              open(p, 'w', encoding='utf-8', newline='\n').write(new)
+              print('patched %s: PD2031 x%d -> PD2057' % (p, s.count('PD2031')))
+              n += 1
+          if n == 0:
+              print('::warning::rc 里没有 PD2031（可能上游已修），继续')
+          # 就地验证：改完必须一处 PD2031 都不剩
+          left = []
+          for q in glob.glob('device/vivo/*/recovery/root/init.recovery.*.rc'):
+              if 'PD2031' in open(q, encoding='utf-8', errors='replace').read():
+                  left.append(q)
+          if left:
+              sys.exit('ERROR: 仍有 rc 残留 PD2031: %s（触控会失效）' % left)
+          print('product model 校验通过：rc 中无 PD2031')
+          PY
 
       - name: Apply patches (vold + bootable/recovery)
         env:
