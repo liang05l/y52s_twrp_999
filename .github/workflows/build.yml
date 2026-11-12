@@ -46,7 +46,7 @@ jobs:
             echo "等待 dpkg 锁释放... ($i)"; sleep 2
           done
           need=""
-          for b in bc bison flex gperf lz4 rsync schedtool; do
+          for b in bc bison flex gperf lz4 rsync schedtool ccache; do
             command -v "$b" >/dev/null 2>&1 || need="$need $b"
           done
           [ -e /usr/include/openssl/ssl.h ]  || need="$need libssl-dev"
@@ -75,23 +75,29 @@ jobs:
 
       - name: Setup ccache
         run: |
-          # 参考 Danidukiyu/twrp_device_nokia_frt 与 kmiit/twrp_device_oplus_sm87xx 的写法：
-          # CCACHE_DIR 必须放在工作区内并用 GITHUB_ENV 传递，放 $HOME 会因只读而让 ninja 失败
-          CC="${{ github.workspace }}/.ccache"
-          mkdir -p "$CC"
-          if touch "$CC/.wtest" 2>/dev/null; then
-            rm -f "$CC/.wtest"
-            echo "CCACHE_DIR=$CC"            >> $GITHUB_ENV
-            echo "USE_CCACHE=1"              >> $GITHUB_ENV
-            echo "CCACHE_EXEC=$(command -v ccache || echo /usr/bin/ccache)" >> $GITHUB_ENV
-            echo "CCACHE_COMPRESS=1"         >> $GITHUB_ENV
-            echo "CCACHE_MAXSIZE=5G"         >> $GITHUB_ENV
-            "$(command -v ccache || echo /usr/bin/ccache)" -M 5G || true
-            "$(command -v ccache || echo /usr/bin/ccache)" -z || true
-            echo "ccache 就绪: $CC"
-          else
-            echo "::warning::$CC 不可写，本次不启用 ccache"
+          # 参考 Danidukiyu/twrp_device_nokia_frt、kmiit/twrp_device_oplus_sm87xx：
+          # 1) ccache 必须在 PATH 里（先确认装好）  2) CCACHE_DIR 放工作区内并用 GITHUB_ENV 传递
+          # 3) 任何一步不满足就不启用，绝不让缓存把编译搞挂
+          CCBIN="$(command -v ccache || true)"
+          CCDIR="${{ github.workspace }}/.ccache"
+          if [ -z "$CCBIN" ] || [ ! -x "$CCBIN" ]; then
+            echo "::warning::ccache 未安装，本次不启用（不影响产出）"
+            exit 0
           fi
+          mkdir -p "$CCDIR"
+          if ! touch "$CCDIR/.wtest" 2>/dev/null; then
+            echo "::warning::$CCDIR 不可写，本次不启用 ccache"
+            exit 0
+          fi
+          rm -f "$CCDIR/.wtest"
+          echo "CCACHE_DIR=$CCDIR"    >> $GITHUB_ENV
+          echo "USE_CCACHE=1"         >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$CCBIN"   >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=1"    >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=5G"    >> $GITHUB_ENV
+          "$CCBIN" -M 5G   || true
+          "$CCBIN" -z      || true
+          echo "ccache 就绪: $CCBIN -> $CCDIR"
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -173,7 +179,7 @@ jobs:
           lunch omni_k6853v1_64_6360-eng
           time mka recoveryimage -j"$(nproc --all)"
           echo "---- ccache 统计 ----"
-          ccache -s | head -n 15 || true
+          if command -v ccache >/dev/null && [ "${USE_CCACHE:-0}" = "1" ]; then ccache -s | head -n 15; else echo "ccache 未启用"; fi
           ls -lh out/target/product/k6853v1_64_6360/recovery.img
 
       - name: Graft user-999 decryption components
