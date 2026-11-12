@@ -42,6 +42,10 @@ jobs:
           assert len(v) == 108800, 'vts_app_recovery 大小 %d，不是 y52s 版(108800)' % len(v)
           fw = sorted(glob.glob(os.path.join(base, 'recovery/root/vendor/firmware/TP*PD2057*.bin')))
           assert len(fw) == 7, 'PD2057 触控固件数量 %d，应为 7' % len(fw)
+          # 4) 触控 sysfs 权限块（源码树 rc 里没有，必须由我们注入）
+          frag = open(os.path.join(base, 'touch/touch_perms.fragment'), encoding='utf-8').read()
+          assert frag.count('vivo_ts') >= 80, 'touch_perms.fragment 内容不完整'
+          assert 'on boot' in frag, 'touch_perms.fragment 缺少 on boot 段'
           print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d' %
                 (total, cnt, len(v), len(fw), os.path.getsize(os.path.join(base, 'prebuilt/dtbo.img'))))
           PY
@@ -187,6 +191,33 @@ jobs:
             exit 1
           fi
 
+      - name: Inject touch sysfs permissions into init rc
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          set -e
+          cd "$TWRP_DIR"
+          python3 - <<'PY'
+          import sys
+          dev = 'device/vivo/k6853v1_64_6360'
+          rcp = dev + '/recovery/root/init.recovery.mt6853.rc'
+          frag = open(dev + '/touch/touch_perms.fragment', encoding='utf-8').read().rstrip('\n')
+          s = open(rcp, encoding='utf-8').read()
+          if 'touch sysfs perms' in s:
+              print('already injected'); sys.exit(0)
+          lines = s.split('\n')
+          i_exec = next((k for k, x in enumerate(lines) if 'vts_app_recovery --update' in x), None)
+          if i_exec is None:
+              sys.exit('ERROR: rc 中没有 vts_app_recovery --update')
+          i_sec = next((k for k in range(i_exec, -1, -1) if lines[k].startswith('on boot')), None)
+          if i_sec is None:
+              sys.exit('ERROR: 没找到 on boot 段')
+          lines[i_sec:i_sec] = frag.split('\n')
+          open(rcp, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines))
+          print('touch perms 注入完成，插入于第 %d 行' % i_sec)
+          PY
+          echo "rc 中 vivo_ts 行数: $(grep -c vivo_ts device/vivo/k6853v1_64_6360/recovery/root/init.recovery.mt6853.rc)"
+
       - name: Suppress dynamic-partition mount errors (002 等效补丁)
         env:
           TWRP_DIR: ${{ runner.workspace }}/twrp
@@ -196,6 +227,9 @@ jobs:
           python3 - <<'PY'
           import re, sys, os
           p = 'bootable/recovery/partition.cpp'
+          if not os.path.exists(p):
+              print('::warning::partition.cpp 不存在，跳过 fail_mount 抑制')
+              sys.exit(0)
           s = open(p, encoding='utf-8').read()
           if 'Mount_Point != "/vendor"' in s:
               print('already patched'); sys.exit(0)
@@ -213,7 +247,8 @@ jobs:
                           hit += 1
                           break
           if hit == 0:
-              sys.exit('ERROR: 没找到 fail_mount 的 if 条件，需人工核对 partition.cpp')
+              print('::warning::没找到 fail_mount 的 if 条件，跳过（仅影响日志里那几条提示，不影响功能）')
+              sys.exit(0)
           open(p, 'w', encoding='utf-8').write('\n'.join(lines))
           print('patched fail_mount 条件处数 =', hit)
           PY
@@ -269,6 +304,35 @@ jobs:
           print('footer magic', f[:4], 'vbmeta_off', struct.unpack('>Q',f[20:28])[0],
                 'vbmeta_size', struct.unpack('>Q',f[28:36])[0])
           open(os.path.join(os.environ['TWRP_DIR'],'SHA256SUMS'),'w').write(hashlib.sha256(d).hexdigest()+'  recovery.img\n')
+          PY
+
+      - name: Verify built image
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          cd "$TWRP_DIR"
+          python3 - <<'PY'
+          import os, sys, gzip, struct, hashlib
+          sys.path.insert(0, os.path.join(os.environ['GITHUB_WORKSPACE'], 'tools'))
+          from bootimg import parse_header, layout
+          from cpio import read_cpio
+          img = 'out/target/product/k6853v1_64_6360/recovery.img'
+          d = open(img, 'rb').read()
+          assert len(d) == 100663296, '镜像大小 %d != 96MiB' % len(d)
+          assert d[-64:-60] == b'AVBf', 'AVB footer 缺失'
+          h = parse_header(d); l = layout(h, len(d))
+          dtb = d[l['dtb'][0]:l['dtb'][1]]
+          ref = open('device/vivo/k6853v1_64_6360/prebuilt/dtb.img', 'rb').read()
+          assert dtb == ref, 'dtb 段与原厂不一致'
+          E = {e['name']: e['blob'] for e in read_cpio(gzip.decompress(d[l['ramdisk'][0]:l['ramdisk'][1]]))}
+          rc = E['init.recovery.mt6853.rc'].decode('utf-8', 'replace')
+          assert rc.count('vivo_ts') >= 80, 'rc 缺少触控权限块 (%d)' % rc.count('vivo_ts')
+          assert len(E['system/bin/vts_app_recovery']) == 108800, 'vts_app_recovery 不是 y52s 版'
+          fw = [n for n in E if n.startswith('vendor/firmware/') and 'PD2057' in n]
+          assert len(fw) == 7, 'PD2057 固件 %d 个' % len(fw)
+          grafted = 'system/kslib' in E
+          print('VERIFY OK  dtb=一致  rc vti_ts=%d  vts=%d  fw=%d  999注入=%s  size=%d' %
+                (rc.count('vivo_ts'), len(E['system/bin/vts_app_recovery']), len(fw), grafted, len(d)))
           PY
 
       - name: Upload artifact
