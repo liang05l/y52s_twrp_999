@@ -71,7 +71,7 @@ jobs:
             echo "等待 dpkg 锁释放... ($i)"; sleep 2
           done
           need=""
-          for b in bc bison flex gperf lz4 rsync schedtool; do
+          for b in bc bison flex gperf lz4 rsync schedtool ccache; do
             command -v "$b" >/dev/null 2>&1 || need="$need $b"
           done
           [ -e /usr/include/openssl/ssl.h ]  || need="$need libssl-dev"
@@ -97,6 +97,36 @@ jobs:
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Mount ccache on tmpfs
+        run: |
+          # soong sandbox 不允许 ccache 与源码同分区（否则 Read-only file system）
+          # 官方解法：把 ccache 放到独立挂载点。这里用 tmpfs，再配合 actions/cache 持久化。
+          sudo mkdir -p /mnt/ccache
+          sudo mount -t tmpfs -o size=6G,mode=0777 tmpfs /mnt/ccache
+          sudo chmod 0777 /mnt/ccache
+          df -h /mnt/ccache
+          touch /mnt/ccache/.wtest && rm -f /mnt/ccache/.wtest && echo "tmpfs 可写 OK"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: /mnt/ccache
+          key: ccache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Setup ccache
+        run: |
+          CCBIN="$(command -v ccache || echo /usr/bin/ccache)"
+          if [ ! -x "$CCBIN" ]; then echo "::warning::ccache 缺失，本次不启用"; exit 0; fi
+          echo "CCACHE_DIR=/mnt/ccache"  >> $GITHUB_ENV
+          echo "USE_CCACHE=1"            >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$CCBIN"      >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=1"       >> $GITHUB_ENV
+          "$CCBIN" -M 5G -F 0 || true
+          "$CCBIN" -z || true
+          "$CCBIN" -s | head -n 10 || true
 
       - name: Init and sync TWRP 12.1
         env:
@@ -168,6 +198,7 @@ jobs:
           source build/envsetup.sh
           lunch omni_k6853v1_64_6360-eng
           time mka recoveryimage -j"$(nproc --all)"
+          echo "---- ccache 统计 ----"; ccache -s | head -n 12 || true
           ls -lh out/target/product/k6853v1_64_6360/recovery.img
 
       - name: Graft user-999 decryption components
