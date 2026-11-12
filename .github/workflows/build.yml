@@ -57,6 +57,8 @@ jobs:
               '模板不是原厂 RSA2048 vbmeta (algorithm=%d auth=%d)' % (alg, auth)
           assert struct.unpack_from('<Q', tpl, 0x674)[0] == 0x4BC80000, '模板 dtb_addr 不对'
           assert os.path.getsize('tools/align_avb.py') > 0, 'align_avb.py 缺失'
+          assert os.path.getsize('tools/suppress_mount_errors.py') > 0, \
+              'suppress_mount_errors.py 缺失'
 
           print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d  avb_tpl=%d' %
                 (total, cnt, len(v), len(fw),
@@ -225,18 +227,21 @@ jobs:
           print('product model 校验通过：rc 中无 PD2031')
           PY
 
-      - name: Apply patches (vold + bootable/recovery)
+      - name: Upstream patches audit (intentionally NOT applied)
         env:
           TWRP_DIR: ${{ runner.workspace }}/twrp
         run: |
           set -e
           cd "$TWRP_DIR"
-          python3 device/vivo/k6853v1_64_6360/patches/apply-patches.sh 2>&1 | tee /tmp/patches.log
-          echo "--- 冲突检查 ---"
-          if grep -q "✗" /tmp/patches.log; then
-            echo "::error::有补丁应用失败，见 /tmp/patches.log"
-            exit 1
-          fi
+          # 上游 y73s 的 apply-patches.sh 是 Bash 脚本，之前 CI 用 python3 执行必然报错，
+          # 但 "python3 ... | tee" 的退出码取 tee，set -e 没拦住 —— 补丁其实从未应用，
+          # 还伪装成成功。这里明确改成「只审计、不应用」，理由：
+          #  1) system/vold 补丁会改 Keymaster/KeyStorage 行为，而 999 解密依赖 graft
+          #     注入的预编译 vold/keystore 组件，应用后会破坏已验证的 DE/user999 解密；
+          #  2) bootable/recovery 补丁无效：graft 最后把 system/bin/recovery 换成供体
+          #     二进制，源码改动不会进入最终镜像（实测三份镜像该 ELF 同为 b24ddb3b…）。
+          # 挂载错误的等效修复放在构建后的 suppress_mount_errors.py（fstab removable）。
+          find device/vivo/k6853v1_64_6360/patches -name '*.patch' -printf '%p\n' | sort
 
       - name: Inject touch sysfs permissions into init rc
         env:
@@ -265,40 +270,8 @@ jobs:
           PY
           echo "rc 中 vivo_ts 行数: $(grep -c vivo_ts device/vivo/k6853v1_64_6360/recovery/root/init.recovery.mt6853.rc)"
 
-      - name: Suppress dynamic-partition mount errors (002 等效补丁)
-        env:
-          TWRP_DIR: ${{ runner.workspace }}/twrp
-        run: |
-          set -e
-          cd "$TWRP_DIR"
-          python3 - <<'PY'
-          import re, sys, os
-          p = 'bootable/recovery/partition.cpp'
-          if not os.path.exists(p):
-              print('::warning::partition.cpp 不存在，跳过 fail_mount 抑制')
-              sys.exit(0)
-          s = open(p, encoding='utf-8').read()
-          if 'Mount_Point != "/vendor"' in s:
-              print('already patched'); sys.exit(0)
-          lines = s.split('\n'); hit = 0
-          for i, l in enumerate(lines):
-              if 'gui_msg' in l and 'fail_mount=' in l:
-                  for j in range(i - 1, max(-1, i - 4), -1):
-                      if 'Display_Error' in lines[j] and 'Removable' in lines[j]:
-                          ind = re.match(r'\s*', lines[j]).group(0)
-                          cond = lines[j].rstrip()
-                          if not cond.endswith(')'):
-                              break
-                          lines[j] = (cond[:-1] + ' &&\n' + ind +
-                                      '\tMount_Point != "/vendor" && Mount_Point != "/system_root" && Mount_Point != "/persist")')
-                          hit += 1
-                          break
-          if hit == 0:
-              print('::warning::没找到 fail_mount 的 if 条件，跳过（仅影响日志里那几条提示，不影响功能）')
-              sys.exit(0)
-          open(p, 'w', encoding='utf-8').write('\n'.join(lines))
-          print('patched fail_mount 条件处数 =', hit)
-          PY
+      # 不要在编译前改 partition.cpp：graft 会用供体二进制覆盖 system/bin/recovery，
+      # 源码补丁一定丢失。挂载错误在构建后由 suppress_mount_errors.py 解决。
 
       - name: Build recoveryimage
         env:
@@ -394,6 +367,39 @@ jobs:
                 (aux, vs))
           PY
 
+      - name: Suppress mount errors via fstab removable flags
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          set -e
+          cd "$TWRP_DIR"
+          IMG="$PWD/out/target/product/k6853v1_64_6360/recovery.img"
+          python3 "$GITHUB_WORKSPACE/tools/suppress_mount_errors.py" \
+            --img "$IMG" \
+            --template "$GITHUB_WORKSPACE/prebuilt/boot_ref.bin" \
+            --out "$IMG.nomount"
+          mv "$IMG.nomount" "$IMG"
+          python3 - <<'PY'
+          import os, sys, gzip
+          sys.path.insert(0, os.path.join(os.environ['GITHUB_WORKSPACE'], 'tools'))
+          from bootimg import parse_header, layout
+          from cpio import read_cpio
+          p = os.path.join(os.environ['TWRP_DIR'],
+                           'out/target/product/k6853v1_64_6360/recovery.img')
+          d = open(p, 'rb').read()
+          h = parse_header(d); l = layout(h, len(d))
+          raw = d[l['ramdisk'][0]:l['ramdisk'][1]]
+          if raw[:2] == b'\x1f\x8b':
+              raw = gzip.decompress(raw)
+          E = {e['name']: e['blob'] for e in read_cpio(raw)}
+          fs = E['system/etc/recovery.fstab'].decode('utf-8', 'replace')
+          for t in ('/vendor', '/system_root', '/persist'):
+              assert any(x.startswith(t + ' ') and 'removable' in x
+                         for x in fs.split('\n')), 'fstab 缺少 %s 的 removable' % t
+          assert 'system/kslib' in E, '999 载荷丢失'
+          print('MOUNT ERRORS SUPPRESSED  fstab removable x3  999=present')
+          PY
+
       - name: Verify built image
         env:
           TWRP_DIR: ${{ runner.workspace }}/twrp
@@ -421,6 +427,10 @@ jobs:
           ref = open('device/vivo/k6853v1_64_6360/prebuilt/dtb.img', 'rb').read()
           assert dtb == ref, 'dtb 段与原厂不一致'
           E = {e['name']: e['blob'] for e in read_cpio(gzip.decompress(d[l['ramdisk'][0]:l['ramdisk'][1]]))}
+          fs = E['system/etc/recovery.fstab'].decode('utf-8', 'replace')
+          for t in ('/vendor', '/system_root', '/persist'):
+              assert any(x.startswith(t + ' ') and 'removable' in x
+                         for x in fs.split('\n')), 'fstab 缺少 %s 的 removable' % t
           rc = E['init.recovery.mt6853.rc'].decode('utf-8', 'replace')
           assert rc.count('vivo_ts') >= 80, 'rc 缺少触控权限块 (%d)' % rc.count('vivo_ts')
           assert len(E['system/bin/vts_app_recovery']) == 108800, 'vts_app_recovery 不是 y52s 版'
