@@ -46,9 +46,21 @@ jobs:
           frag = open(os.path.join(base, 'touch/touch_perms.fragment'), encoding='utf-8').read()
           assert frag.count('vivo_ts') >= 80, 'touch_perms.fragment 内容不完整'
           assert 'on boot' in frag, 'touch_perms.fragment 缺少 on boot 段'
+          # 5) FBE 解密：root-of-trust 模板 + 对齐脚本必须齐备且为原厂 RSA2048 模板
+          tpl = open('prebuilt/boot_ref.bin', 'rb').read()
+          assert len(tpl) == 3776, 'boot_ref.bin 长度 %d != 3776' % len(tpl)
+          assert tpl[:8] == b'ANDROID!', '模板 boot header 不是 ANDROID!'
+          assert tpl[2048:2052] == b'AVB0', '模板 vbmeta 不是 AVB0'
+          alg, = struct.unpack_from('>I', tpl, 2048 + 0x1C)
+          auth, = struct.unpack_from('>Q', tpl, 2048 + 0x0C)
+          assert alg == 1 and auth == 320, \
+              '模板不是原厂 RSA2048 vbmeta (algorithm=%d auth=%d)' % (alg, auth)
+          assert struct.unpack_from('<Q', tpl, 0x674)[0] == 0x4BC80000, '模板 dtb_addr 不对'
+          assert os.path.getsize('tools/align_avb.py') > 0, 'align_avb.py 缺失'
 
-          print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d' %
-                (total, cnt, len(v), len(fw), os.path.getsize(os.path.join(base, 'prebuilt/dtbo.img'))))
+          print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d  avb_tpl=%d' %
+                (total, cnt, len(v), len(fw),
+                 os.path.getsize(os.path.join(base, 'prebuilt/dtbo.img')), len(tpl)))
           PY
 
       - name: Free disk space
@@ -341,6 +353,47 @@ jobs:
           open(os.path.join(os.environ['TWRP_DIR'],'SHA256SUMS'),'w').write(hashlib.sha256(d).hexdigest()+'  recovery.img\n')
           PY
 
+      - name: Align boot root-of-trust with stock vbmeta (FBE decryption)
+        env:
+          TWRP_DIR: ${{ runner.workspace }}/twrp
+        run: |
+          set -e
+          cd "$TWRP_DIR"
+          IMG="$PWD/out/target/product/k6853v1_64_6360/recovery.img"
+          python3 "$GITHUB_WORKSPACE/tools/align_avb.py" \
+            --img "$IMG" \
+            --template "$GITHUB_WORKSPACE/prebuilt/boot_ref.bin" \
+            --out "$IMG.rot-aligned"
+          mv "$IMG.rot-aligned" "$IMG"
+          python3 - <<'PY'
+          import os, struct, hashlib
+          p = os.path.join(os.environ['TWRP_DIR'],
+                           'out/target/product/k6853v1_64_6360/recovery.img')
+          d = open(p, 'rb').read()
+          f = d[-64:]
+          sect = struct.unpack_from('>Q', f, 0x0C)[0]
+          vo   = struct.unpack_from('>Q', f, 0x14)[0]
+          vs   = struct.unpack_from('>Q', f, 0x1C)[0]
+          vb   = d[vo:vo+vs]
+          assert vb[:4] == b'AVB0', 'vbmeta 缺失'
+          alg  = struct.unpack_from('>I', vb, 0x1C)[0]
+          ab   = struct.unpack_from('>Q', vb, 0x0C)[0]
+          aux  = struct.unpack_from('>Q', vb, 0x14)[0]
+          assert alg == 1 and ab == 320 and vs == 1728, \
+              'vbmeta 不是原厂模板 alg=%d auth=%d size=%d' % (alg, ab, vs)
+          qd = 256 + ab + 16
+          pn, sl, rl, _ = struct.unpack_from('>IIII', vb, qd + 40)
+          off = qd + 116
+          salt = vb[off+pn:off+pn+sl]
+          digest = vb[off+pn+sl:off+pn+sl+rl]
+          assert hashlib.sha256(salt + d[:sect]).digest() == digest, 'AVB root digest 不自洽'
+          assert hashlib.sha256(vb[:256] + vb[256+ab:256+ab+aux]).digest() == vb[256:288], \
+              'vbmeta hash 不自洽'
+          assert struct.unpack_from('<Q', d, 0x674)[0] == 0x4BC80000, 'dtb_addr 未对齐原厂'
+          print('ROT ALIGN OK  algorithm=1 auth=320 aux=%d vbmeta=%d dtb_addr=0x4BC80000' %
+                (aux, vs))
+          PY
+
       - name: Verify built image
         env:
           TWRP_DIR: ${{ runner.workspace }}/twrp
@@ -356,6 +409,14 @@ jobs:
           assert len(d) == 100663296, '镜像大小 %d != 96MiB' % len(d)
           assert d[-64:-60] == b'AVBf', 'AVB footer 缺失'
           h = parse_header(d); l = layout(h, len(d))
+          assert h['dtb_addr'] == 0x4BC80000, 'dtb_addr 未对齐原厂'
+          assert h['cmdline'].count('buildvariant=eng') == 1, 'cmdline 有重复 buildvariant'
+          f = d[-64:]
+          vo = struct.unpack_from('>Q', f, 0x14)[0]
+          vs = struct.unpack_from('>Q', f, 0x1C)[0]
+          vb = d[vo:vo+vs]
+          assert struct.unpack_from('>I', vb, 0x1C)[0] == 1, 'vbmeta 算法不是原厂 RSA2048'
+          assert vs == 1728, 'vbmeta 大小 %d 不是原厂模板' % vs
           dtb = d[l['dtb'][0]:l['dtb'][1]]
           ref = open('device/vivo/k6853v1_64_6360/prebuilt/dtb.img', 'rb').read()
           assert dtb == ref, 'dtb 段与原厂不一致'
