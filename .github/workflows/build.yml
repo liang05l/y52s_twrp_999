@@ -21,6 +21,31 @@ jobs:
       - name: Checkout device tree overlay
         uses: actions/checkout@v4
 
+      - name: Preflight checks
+        run: |
+          python3 - <<'PY'
+          import struct, glob, sys, hashlib, os
+          base = 'device/vivo/k6853v1_64_6360'
+          # 1) dtb 表必须自洽（上一版这里被写成 dtbo 的 199573，越界导致内核挂死）
+          dtb = open(os.path.join(base, 'prebuilt/dtb.img'), 'rb').read()
+          magic, total, hs, es, cnt = struct.unpack_from('>IIIII', dtb, 0)
+          assert magic == 0xD7B7AB1E, 'dtb 魔数不对'
+          assert total == len(dtb), 'dtb 表 total=%d 与文件长度 %d 不符' % (total, len(dtb))
+          off, sz = struct.unpack_from('>II', dtb, hs)
+          assert off + sz <= len(dtb), 'dtb 表项越界 (off=%d size=%d len=%d)' % (off, sz, len(dtb))
+          # 2) 引导段存在
+          for f in ('prebuilt/kernel', 'prebuilt/dtbo.img'):
+              n = os.path.getsize(os.path.join(base, f))
+              assert n > 0, f + ' 为空'
+          # 3) 触控：必须是 y52s 版二进制 + 7 个 PD2057 固件
+          v = open(os.path.join(base, 'recovery/root/system/bin/vts_app_recovery'), 'rb').read()
+          assert len(v) == 108800, 'vts_app_recovery 大小 %d，不是 y52s 版(108800)' % len(v)
+          fw = sorted(glob.glob(os.path.join(base, 'recovery/root/vendor/firmware/TP*PD2057*.bin')))
+          assert len(fw) == 7, 'PD2057 触控固件数量 %d，应为 7' % len(fw)
+          print('PREFLIGHT OK  dtb: total=%d entries=%d  vts_app_recovery=%d  fw=%d  dtbo=%d' %
+                (total, cnt, len(v), len(fw), os.path.getsize(os.path.join(base, 'prebuilt/dtbo.img'))))
+          PY
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
